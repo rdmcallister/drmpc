@@ -1,9 +1,7 @@
 import numpy as np
 import drmpc
 import control
-import pickle
 import matplotlib.pyplot as plt
-import scipy.linalg as linalg
 import time
 
 filename = "n2_nom"
@@ -54,25 +52,13 @@ params = {
 }
 
 # Horizon length
-N = 6
+N = 10
 
 Sigma_hat = np.diag([0.01, 0.01])
 rho = 0.1
 
-DRMPC = drmpc.DRMPC(
-    params,
-    N,
-    rho=rho,
-    Sigma_hat=Sigma_hat,
-    warmstart=True,
-    K_f=K_f,
-    alg="NT",
-)
-
 x0 = np.array([[1], [1]])
-output = DRMPC.solve_ocp(x0)
-
-breakpoint()
+Nsim = int(50)
 
 
 def run_sim(Sigma_hat, rho):
@@ -89,7 +75,6 @@ def run_sim(Sigma_hat, rho):
 
     trials = 1
     x0 = np.array([[1], [1]])
-    Nsim = int(5)
 
     xcl = np.empty((trials, n, Nsim + 1))
     ucl = np.empty((trials, m, Nsim))
@@ -126,14 +111,27 @@ def run_sim(Sigma_hat, rho):
     return sim
 
 
-Sigma_hat = np.diag([0.01, 0.01])
-rho = 0.1
-
 drmpc_sim = run_sim(Sigma_hat, rho)
 smpc_sim = run_sim(Sigma_hat, 0)
 rmpc_sim = run_sim(np.zeros((2, 2)), 0)
 
-stats = {"drmpc": drmpc_sim, "smpc": smpc_sim, "rmpc": rmpc_sim}
+fig, axs = plt.subplots(1, 1, figsize=(3.5, 2))
 
-with open(filename + ".pkl", "wb") as handle:
-    pickle.dump(stats, handle, protocol=pickle.HIGHEST_PROTOCOL)
+gridstyle = {"alpha": 0.5, "linewidth": 0.5}
+norot = {"rotation": 0, "va": "center", "ha": "right"}
+
+ax = axs
+ax.plot(drmpc_sim["xcl"][0, 0], label="DRMPC", marker=".")
+ax.plot(smpc_sim["xcl"][0, 0], label="SMPC", marker="*")
+ax.plot(rmpc_sim["xcl"][0, 0], label="RMPC", marker="x")
+ax.axhline(0, linestyle="dashed", color="k", linewidth=0.5, label=r"$x=0$")
+ax.set_xlim(0, Nsim)
+ax.set_xlabel(r"$k$")
+ax.set_ylabel(r"$x_1(k)$", **norot)
+ax.legend()
+ax.grid(**gridstyle)
+
+fig.align_ylabels()
+fig.tight_layout(pad=0.5)
+
+plt.show()

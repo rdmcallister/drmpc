@@ -14,14 +14,14 @@ class DRMPC:
         N,
         rho=None,
         Sigma_hat=None,
-        warmstart=False,
+        warmstart=False,  # warm start NT/FW algs with extended solution
         K_f=None,
         iid=True,
         alg="NT",
         alg_options={},
-        solver="SCS",  # MOSEK is preferred
+        solver="MOSEK",  # MOSEK is preferred
         solver_options={
-            "warm_start": True  # warm_start solver with previous solution, not extended solution
+            "warm_start": True  # warm start solver with previous solution, not extended solution
         },
     ):
         """Inits DRMPC object
@@ -129,20 +129,20 @@ class DRMPC:
         """Return matrices used in DRMPC formulation"""
         return self.matrices
 
-    def solve_ocp(self, x0, w_prev=None):
+    def solve_ocp(self, x0, w_prev=None, v_ws=None, M_ws=None):
         """Solve DRMPC problem with initial condition x0
 
         args
             x0: current state
             w_prev: Previous disturbance to compute warm start
+            v_ws: warm-start/initial value for v_ws
+            M_ws: warm-start/initial value for v_ws
         """
         x0 = np.reshape(x0, (self.dims["n"], 1))
         if w_prev is not None:
             M_ws, v_ws = self.calc_warmstart(x0, w_prev, self.M_prev, self.v_prev)
             # print(self._check_feas(self.lp, x0, M_ws, v_ws))
         else:
-            M_ws = None
-            v_ws = None
             if self.warmstart:
                 print("Not using warmstart because w_prev was not provided.")
         start = time.time()
@@ -151,7 +151,7 @@ class DRMPC:
 
         if self.alg == "NT" and not self.smpc:
             options = {
-                "iter": 100,
+                "max_iter": 100,
                 "tol": 1e-8,
                 "stepsize": "fully adaptive",
                 "tau": 1.1,
@@ -168,7 +168,7 @@ class DRMPC:
 
         if self.alg == "FW" and not self.smpc:
             options = {
-                "iter": 1000,
+                "max_iter": 1000,
                 "tol": 1e-6,
                 "stepsize": "fully adaptive",
                 "tau": 1.1,
@@ -195,17 +195,19 @@ class DRMPC:
             # print(self._check_feas(self.lp, x0, self.M_prev, self.v_prev))
         return {"kappa": kappa, "opt": opt, "dur": dur}
 
-    def kappa(self, x0, w_prev=None):
+    def kappa(self, x0, w_prev=None, **kwargs):
         """Returns only the first optimal input for closed-loop simulation
 
         args
             x0: current state
             w_prev: Previous disturbance to compute warm start
+            v_ws: warm-start/initial value for v_ws
+            M_ws: warm-start/initial value for v_ws
         """
-        output = self.solve_ocp(x0, w_prev=w_prev)
+        output = self.solve_ocp(x0, w_prev=w_prev, **kwargs)
         return output["kappa"]
 
-    def bisection_iid(self, D, rho, Sigma_hat, N, tol=1e-8, iter=int(1e6)):
+    def bisection_iid(self, D, rho, Sigma_hat, N, tol=1e-8, max_iter=int(1e6)):
         """Compute worst case covariance bfSigma for current D"""
         q = np.shape(Sigma_hat)[0]
         bfSigma = np.zeros((q * N, q * N))
@@ -215,11 +217,11 @@ class DRMPC:
                 rho,
                 Sigma_hat,
                 tol=tol,
-                iter=iter,
+                max_iter=max_iter,
             )
         return bfSigma
 
-    def bisection(self, D, rho, Sigma_hat, tol=1e-8, iter=int(1e6)):
+    def bisection(self, D, rho, Sigma_hat, tol=1e-8, max_iter=int(1e6)):
         """Bisection algorithm to solve for worst case covariance Sigma"""
         n = np.shape(D)[0]
         [Lambda, V] = np.linalg.eigh(D)
@@ -238,7 +240,7 @@ class DRMPC:
         v_max = V[:, -1]
         LB = lambda_max * (1 + np.sqrt(v_max.T @ Sigma_hat @ v_max) / rho)
         UB = lambda_max * (1 + np.sqrt(np.trace(Sigma_hat)) / rho)
-        for iter in range(iter):
+        for iter in range(max_iter):
             gamma = (LB + UB) / 2
             inv_gamma_minus_D = (V * (1 / (gamma - Lambda))) @ V.T
             L = gamma**2 * (inv_gamma_minus_D @ Sigma_hat @ inv_gamma_minus_D)
@@ -337,7 +339,7 @@ class DRMPC:
         x,
         M_ws=None,
         v_ws=None,
-        iter=100,
+        max_iter=100,
         tol=1e-8,
         stepsize="standard",
         tau=1.1,
@@ -410,11 +412,11 @@ class DRMPC:
             dual_ls += [dual_t]
             surrogate_dual_gap_ls += [g]
             if cost_t - dual_t < tol:
-                status = "converged to tolerance"
+                status = "Converged"
                 break
 
-            if t >= iter:
-                status = "exceeded max iterations"
+            if t >= max_iter:
+                status = "Exceeded max iterations"
                 break
 
             if stepsize == "constant":
@@ -476,7 +478,7 @@ class DRMPC:
         x,
         M_ws=None,
         v_ws=None,
-        iter=1000,
+        max_iter=1000,
         tol=1e-8,
         stepsize="standard",
         tau=1.1,
@@ -495,7 +497,6 @@ class DRMPC:
         iid = self.iid
 
         x = np.reshape(x, (n, 1))
-
         if M_ws is None or v_ws is None:
             opt_qp = self._solve_qp(self.qp, x, self.bfSigma_hat)
             M = opt_qp["M"]
@@ -548,11 +549,11 @@ class DRMPC:
             dual_ls += [dual_t]
             surrogate_dual_gap_ls += [g]
             if g < tol:
-                status = "converged to tolerance"
+                status = "Converged"
                 break
 
-            if t >= iter:
-                status = "exceeded max iterations"
+            if t >= max_iter:
+                status = "Exceeded max iterations"
                 break
 
             if stepsize == "constant":
@@ -621,7 +622,7 @@ class DRMPC:
             opt = {
                 "v": v.value,
                 "M": M.value,
-                "obj": prob.value + (H_x @ x).T @ (H_x @ x),
+                "obj": (prob.value + (H_x @ x).T @ (H_x @ x)).item(),
                 "solverstats": prob.solver_stats,
                 "all_vars": {var.name(): var.value for var in prob.variables()},
             }
