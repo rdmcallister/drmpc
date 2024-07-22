@@ -1,5 +1,4 @@
 import numpy as np
-import scipy as sp
 import cvxpy as cp
 from cvxpy.atoms.affine.wraps import psd_wrap
 import scipy.linalg as linalg
@@ -7,60 +6,115 @@ import time
 
 
 class DRMPC:
+    """Creates DRMPC object that can solve the DRMPC optimization problem"""
+
     def __init__(
         self,
         params,
         N,
         rho=None,
         Sigma_hat=None,
-        iid=False,
-        bfSigma_hat=None,
-        bfrho=None,
         warmstart=False,
         K_f=None,
+        iid=True,
+        alg="NT",
+        alg_options={},
+        solver="SCS",
+        solver_options={"warm_start": True},
     ):
+        """Inits DRMPC object
+
+        Args:
+            params: dict with keyword args for matricies in DRMPC formulation.
+            N: Horizon length (int).
+            rho: Gelbrich ball radius for iid disturbance (scalar).
+            Sigma_hat: Covariance of center for Gelbrich ball (numpy array).
+            warmstart: True if terminal gain matrix K_f is used to construct a warm start.
+            K_f: Terminal gain matrix K_f to be used if warmstart=True
+            alg: "NT" (Newton type), "SDP", or "FW" (Frank-Wolfe)
+            alg_options: Options for NT or FW algorithm
+            solver: Solver for CVXPY (SCS by default) for LP, QP, or SDP
+            solver_options: Options for CVXPY solver
+        """
         self.params = params
         self.N = N
         self.warmstart = warmstart
+        self.K_f = K_f
+        self.alg = alg
+        self.alg_options = alg_options
+        self.solver = solver
+        self.solver_options = solver_options
+
+        # Initialize parameters for warm start
         self.M_prev = None
         self.v_prev = None
-        self.K_f = K_f
+
+        # Computer dimensions and complete matrices from params and N
         self.dims = self._get_dims(**params)
         self.matrices = self._construct_matrices(**{**params, **self.dims, "N": N})
 
-        self.qp = self._construct_qp(**self.matrices)
-        # self.lp = self._construct_feas_lp(**self.matrices)
-
-        if rho is None and bfrho is None:
+        # If rho and bfrho are none, assume zero radius
+        if rho is None:
             rho = 0
-        if Sigma_hat is None and bfSigma_hat is None:
+        # Construct bfrho from rho and horizon length
+        bfrho = np.sqrt(N) * rho
+
+        if rho <= 1e-16:
+            self.smpc = True
+        else:
+            self.smpc = False
+
+        # If Sigma_hat is none, assume zero
+        if Sigma_hat is None:
             Sigma_hat = np.zeros((self.dims["q"], self.dims["q"]))
+        # Construct from bfSigma_hat as block diagonal of Sigma_hat
+        bfSigma_hat = np.kron(np.eye(N), Sigma_hat)
 
-        if bfSigma_hat is None:
-            bfSigma_hat = np.kron(np.eye(N), Sigma_hat)
-        if bfrho is None:
-            bfrho = np.sqrt(N) * rho
-
+        # set Gelbrich parameters
         self.rho = rho
         self.Sigma_hat = Sigma_hat
         self.bfrho = bfrho
         self.bfSigma_hat = bfSigma_hat
-
         self.iid = iid
 
-        if iid:
-            self.beta = self._estimate_beta_iid(
-                **self.matrices, Sigma_hat=Sigma_hat, rho=rho
-            )
-        else:
-            self.beta = self._estimate_beta(
-                **self.matrices, bfSigma_hat=bfSigma_hat, bfrho=bfrho
-            )
+        if self.smpc:
+            self.qp = self._construct_qp(**self.matrices)
+
+        # Construct QP if NT algorithm
+        if self.alg == "NT" and not self.smpc:
+            self.qp = self._construct_qp(**self.matrices)
+
+            # estimate beta for Newton type method
+            if iid:
+                self.beta = self._estimate_beta_iid(
+                    **self.matrices, Sigma_hat=Sigma_hat, rho=rho
+                )
+            else:
+                self.beta = self._estimate_beta(
+                    **self.matrices, bfSigma_hat=bfSigma_hat, bfrho=bfrho
+                )
+
+        if self.alg == "SDP" and not self.smpc:
+            if iid:
+                self.sdp = self._construct_sdp_iid(
+                    **{**self.matrices, "rho": rho, "Sigma_hat": Sigma_hat}
+                )
+            else:
+                self.sdp = self._construct_sdp(
+                    **{
+                        **self.matrices,
+                        "N": N,
+                        "bfrho": bfrho,
+                        "bfSigma_hat": bfSigma_hat,
+                    }
+                )
 
     def get_matrices(self):
+        """Return matrices used in DRMPC formulation"""
         return self.matrices
 
     def _get_dims(self, B, G, **kwargs):
+        """Get dimensions from B and G"""
         (n, m) = np.shape(B)
         q = np.shape(G)[-1]
         return {"n": n, "m": m, "q": q}
@@ -85,6 +139,7 @@ class DRMPC:
         q,
         N,
     ):
+        """Construct full matrices for DRMPC formulation"""
         bfA = np.eye(n)
         bfL = np.zeros((n, n * N))
         for i in range(N):
@@ -152,6 +207,7 @@ class DRMPC:
         return matrices
 
     def solve_ocp(self, x0, w_prev=None):
+        """Solve DRMPC problem with initial condition x0"""
         x0 = np.reshape(x0, (self.dims["n"], 1))
         if w_prev is not None:
             M_ws, v_ws = self.get_warmstart(x0, w_prev, self.M_prev, self.v_prev)
@@ -162,16 +218,27 @@ class DRMPC:
             if self.warmstart:
                 print("Not using warmstart because w_prev was not provided.")
         start = time.time()
-        opt = self.qpfw(
-            x0,
-            M_ws=M_ws,
-            v_ws=v_ws,
-            iter=100,
-            tol=1e-8,
-            stepsize="fully adaptive",
-            tau=1.1,
-            zeta=10,
-        )
+        if self.smpc:
+            opt = self._solve_qp(self.qp, x0, self.bfSigma_hat)
+
+        if self.alg == "NT" and not self.smpc:
+            options = {
+                "iter": 100,
+                "tol": 1e-8,
+                "stepsize": "fully adaptive",
+                "tau": 1.1,
+                "zeta": 10,
+            }
+            options.update(self.alg_options)
+            opt = self.nt_alg(
+                x0,
+                M_ws=M_ws,
+                v_ws=v_ws,
+                **options,
+            )
+            print(opt["status"])
+        if self.alg == "SDP" and not self.smpc:
+            opt = self.solve_sdp(self.sdp, x0)
         end = time.time()
         dur = end - start
         kappa = opt["v"][0 : self.dims["m"], 0]
@@ -237,7 +304,7 @@ class DRMPC:
         v_par.value = np.reshape(v, (len(v), 1))
         M_par.value = M
 
-        prob.solve("MOSEK", warm_start=True)
+        prob.solve(self.solver, warm_start=True)
 
         if prob.status not in ["infeasible", "unbounded"]:
             return prob.value
@@ -261,7 +328,7 @@ class DRMPC:
         q,
         **kwargs,
     ):
-
+        """Construct QP for inner problem of NT algorithm"""
         (S_rows, S_cols) = np.shape(bfS)
         (F_rows, F_cols) = np.shape(F)
         (H_u_rows, H_u_cols) = np.shape(H_u)
@@ -291,6 +358,7 @@ class DRMPC:
         return qp
 
     def _solve_qp(self, qp, x, bfSigma):
+        """Solve QP for inner NT problem"""
         prob = qp["prob"]
         v = qp["v"]
         M = qp["M"]
@@ -300,15 +368,20 @@ class DRMPC:
         x_par.value = np.reshape(x, (len(x), 1))
         bfSigma_sqrt_par.value = linalg.sqrtm(bfSigma)
 
-        prob.solve("MOSEK", warm_start=True)
+        prob.solve(self.solver, **self.solver_options)
 
         if prob.status not in ["infeasible", "unbounded"]:
-            return v.value, M.value
+            opt = {
+                "v": v.value,
+                "M": M.value,
+                "solverstats": prob.solver_stats,
+            }
+            return opt
         else:
             raise ValueError("Problem is " + str(prob.status))
 
     def _estimate_beta_iid(self, H_u, Sigma_hat, rho, **kwargs):
-
+        """Estimate smoothness parameter beta for NT algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (np.linalg.norm(Sigma_hat, ord=2) + rho**2) * beta_v
@@ -316,6 +389,7 @@ class DRMPC:
         return beta
 
     def _estimate_beta(self, H_u, bfSigma_hat, bfrho, **kwargs):
+        """Estimate smoothness parameter beta for NT algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (np.linalg.norm(bfSigma_hat, ord=2) + bfrho**2) * beta_v
@@ -323,6 +397,7 @@ class DRMPC:
         return beta
 
     def bisection_iid(self, D, rho, Sigma_hat, N, tol=1e-8, iter=int(1e6)):
+        """Compute worst case covariance bfSigma for current D"""
         q = np.shape(Sigma_hat)[0]
         bfSigma = np.zeros((q * N, q * N))
         for k in range(N):
@@ -336,6 +411,7 @@ class DRMPC:
         return bfSigma
 
     def bisection(self, D, rho, Sigma_hat, tol=1e-8, iter=int(1e6)):
+        """Bisection algorithm to solve for worst case covariance Sigma"""
         n = np.shape(D)[0]
         [Lambda, V] = np.linalg.eigh(D)
         idx = np.argsort(Lambda)
@@ -375,7 +451,14 @@ class DRMPC:
         return L
 
     def get_warmstart(self, x_plus, w, M, v):
+        """Compute warm start
 
+        args
+            x_plus: new state
+            w: previous disturbance
+            M: previous solution M for the DRMPC problem
+            v: previous solution v for the DRMPC problem
+        """
         A = self.params["A"]
         B = self.params["B"]
         G = self.params["G"]
@@ -425,6 +508,7 @@ class DRMPC:
         return M_ws, v_ws
 
     def calc_cost(self, x, v, M):
+        """Calculate worst case cost of solution from internal matrices and bisection algorithm"""
         H_x = self.matrices["H_x"]
         H_u = self.matrices["H_u"]
         H_w = self.matrices["H_w"]
@@ -433,11 +517,13 @@ class DRMPC:
             bfSigma = self.bisection_iid(D, self.rho, self.Sigma_hat, self.N)
         else:
             bfSigma = self.bisection(D, self.bfrho, self.bfSigma_hat)
-        out = 2 * x.T @ H_x.T @ H_u @ v + v.T @ H_u.T @ H_u @ v
+        out = (
+            (H_x @ x).T @ (H_x @ x) + 2 * x.T @ H_x.T @ H_u @ v + v.T @ H_u.T @ H_u @ v
+        )
         out += np.trace((H_u @ M + H_w).T @ (H_u @ M + H_w) @ bfSigma)
         return out.item()
 
-    def qpfw(
+    def nt_alg(
         self,
         x,
         M_ws=None,
@@ -463,7 +549,9 @@ class DRMPC:
         x = np.reshape(x, (n, 1))
 
         if M_ws is None or v_ws is None:
-            [v, M] = self._solve_qp(self.qp, x, self.bfSigma_hat)
+            opt_qp = self._solve_qp(self.qp, x, self.bfSigma_hat)
+            M = opt_qp["M"]
+            v = opt_qp["v"]
         else:
             M = M_ws
             v = np.reshape(v_ws, (N * m, 1))
@@ -474,11 +562,16 @@ class DRMPC:
         dual_t = -np.inf
 
         def cost(v, M, bfSigma):
-            out = 2 * x.T @ H_x.T @ H_u @ v + v.T @ H_u.T @ H_u @ v
+            out = (
+                (H_x @ x).T @ (H_x @ x)
+                + 2 * x.T @ H_x.T @ H_u @ v
+                + v.T @ H_u.T @ H_u @ v
+            )
             out += np.trace((H_u @ M + H_w).T @ (H_u @ M + H_w) @ bfSigma)
             return out.item()
 
-        for t in range(iter):
+        t = 0
+        while True:
             # solve inner maximization
             D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
             if iid:
@@ -490,7 +583,9 @@ class DRMPC:
             cost_ls += [cost_t]
 
             # solve outer minimization
-            [s_v, s_M] = self._solve_qp(self.qp, x, bfSigma)
+            opt_qp = self._solve_qp(self.qp, x, bfSigma)
+            s_v = opt_qp["v"]
+            s_M = opt_qp["M"]
 
             cost_qp = cost(s_v, s_M, bfSigma)
 
@@ -513,11 +608,17 @@ class DRMPC:
             dual_ls += [dual_t]
             surrogate_dual_gap_ls += [g]
             if cost_t - dual_t < tol:
+                status = "converged to tolerance"
                 break
 
-            if self.rho == 0:
+            if self.rho <= 1e-16:
                 v = s_v
                 M = s_M
+                status = "converged to tolerance"
+                break
+
+            if t >= iter:
+                status = "exceeded max iterations"
                 break
 
             if stepsize == "constant":
@@ -563,10 +664,199 @@ class DRMPC:
             v = (1 - eta) * v + eta * s_v
             M = (1 - eta) * M + eta * s_M
 
+            t = t + 1
+
         return {
             "v": v,
             "M": M,
             "cost": np.array(cost_ls),
             "dual": np.array(dual_ls),
             "surrogate_dual_gap": np.array(surrogate_dual_gap_ls),
+            "status": status,
         }
+
+    def solve_sdp(self, sdp, x):
+        prob = sdp["prob"]
+        v = sdp["v"]
+        M = sdp["M"]
+        x_par = sdp["x"]
+        H_x = self.matrices["H_x"]
+
+        x_par.value = np.reshape(x, (len(x), 1))
+        prob.solve(self.solver, **self.solver_options)
+
+        if prob.status not in ["infeasible", "unbounded"]:
+            opt = {
+                "v": v.value,
+                "M": M.value,
+                "obj": prob.value + (H_x @ x).T @ (H_x @ x),
+                "solverstats": prob.solver_stats,
+                "all_vars": {var.name(): var.value for var in prob.variables()},
+            }
+            return opt
+        else:
+            raise ValueError("Problem is " + str(prob.status))
+
+    def _construct_sdp(
+        self,
+        F,
+        E,
+        H,
+        c,
+        bfS,
+        bfh,
+        H_x,
+        H_u,
+        H_w,
+        N,
+        n,
+        m,
+        q,
+        bfrho,
+        bfSigma_hat,
+    ):
+        (S_rows, S_cols) = np.shape(bfS)
+        (F_rows, F_cols) = np.shape(F)
+        (H_u_rows, H_u_cols) = np.shape(H_u)
+
+        M = cp.Variable((m * N, q * N), name="M")
+        v = cp.Variable((m * N, 1), name="v")
+        bfZ = cp.Variable((S_rows, F_rows), name="bfZ")
+        tildeX = cp.Variable((q * N, q * N), symmetric=True, name="tildeX")
+        Y = cp.Variable((q * N, q * N), symmetric=True, name="Y")
+        gamma = cp.Variable(name="gamma")
+        x = cp.Parameter((n, 1), name="x")
+
+        constraints = []
+        constraints += [bfZ >= 0]
+        constraints += [Y >> 0]
+        constraints += [gamma >= 0]
+
+        for i in range(N):
+            constraints += [M[(m * i) : (m * (i + 1)), (q * i) :] == 0]
+
+        constraints += [F @ v + bfZ.T @ bfh <= c + H @ x]
+        constraints += [bfZ.T @ bfS == F @ M + E]
+
+        constraints += [
+            cp.bmat(
+                [
+                    [tildeX, (H_u @ M + H_w).T],
+                    [H_u @ M + H_w, np.eye(H_u_rows)],
+                ]
+            )
+            >> 0
+        ]
+
+        constraints += [gamma * np.eye(q * N) >> tildeX]
+        constraints += [
+            cp.bmat(
+                [
+                    [Y, gamma * linalg.sqrtm(bfSigma_hat)],
+                    [
+                        gamma * linalg.sqrtm(bfSigma_hat),
+                        gamma * np.eye(q * N) - tildeX,
+                    ],
+                ]
+            )
+            >> 0
+        ]
+
+        obj = 2 * (H_x @ x).T @ H_u @ v + cp.quad_form(v, H_u.T @ H_u)
+        obj += gamma * (bfrho**2 - np.trace(bfSigma_hat))
+        obj += cp.trace(Y)
+        prob = cp.Problem(cp.Minimize(obj), constraints)
+        sdp = {
+            "prob": prob,
+            "obj": obj,
+            "constraints": constraints,
+            "x": x,
+            "v": v,
+            "M": M,
+        }
+        return sdp
+
+    def _construct_sdp_iid(
+        self,
+        F,
+        E,
+        H,
+        c,
+        bfS,
+        bfh,
+        H_x,
+        H_u,
+        H_w,
+        N,
+        n,
+        m,
+        q,
+        rho,
+        Sigma_hat,
+    ):
+        (S_rows, S_cols) = np.shape(bfS)
+        (F_rows, F_cols) = np.shape(F)
+        (H_u_rows, H_u_cols) = np.shape(H_u)
+
+        M = cp.Variable((m * N, q * N), name="M")
+        v = cp.Variable((m * N, 1), name="v")
+        bfZ = cp.Variable((S_rows, F_rows), name="bfZ")
+        tildeX = cp.Variable((q * N, q * N), symmetric=True, name="tildeX")
+        Y = cp.Variable((q * N, q * N), symmetric=True, name="Y")
+        gamma = cp.Variable(N, name="gamma")
+        x = cp.Parameter((n, 1), name="x")
+
+        constraints = []
+        constraints += [bfZ >= 0]
+        constraints += [Y >> 0]
+        constraints += [gamma >= 0]
+
+        for i in range(N):
+            constraints += [M[(m * i) : (m * (i + 1)), (q * i) :] == 0]
+
+        constraints += [F @ v + bfZ.T @ bfh <= c + H @ x]
+        constraints += [bfZ.T @ bfS == F @ M + E]
+
+        constraints += [
+            cp.bmat(
+                [
+                    [tildeX, (H_u @ M + H_w).T],
+                    [H_u @ M + H_w, np.eye(H_u_rows)],
+                ]
+            )
+            >> 0
+        ]
+
+        obj = 2 * (H_x @ x).T @ H_u @ v + cp.quad_form(v, H_u.T @ H_u)
+
+        for k in range(N):
+            tildeX_k = tildeX[q * k : q * (k + 1), q * k : q * (k + 1)]
+            Y_k = Y[q * k : q * (k + 1), q * k : q * (k + 1)]
+
+            constraints += [gamma[k] * np.eye(q) >> tildeX_k]
+            constraints += [
+                cp.bmat(
+                    [
+                        [Y_k, gamma[k] * linalg.sqrtm(Sigma_hat)],
+                        [
+                            gamma[k] * linalg.sqrtm(Sigma_hat),
+                            gamma[k] * np.eye(q) - tildeX_k,
+                        ],
+                    ]
+                )
+                >> 0
+            ]
+
+            obj += gamma[k] * (rho**2 - np.trace(Sigma_hat))
+            obj += cp.trace(Y_k)
+
+        prob = cp.Problem(cp.Minimize(obj), constraints)
+        sdp = {
+            "prob": prob,
+            "obj": obj,
+            "constraints": constraints,
+            "x": x,
+            "v": v,
+            "M": M,
+        }
+        return sdp

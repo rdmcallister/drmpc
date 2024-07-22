@@ -1,33 +1,40 @@
 import numpy as np
-import drmpc_qpfw
+import drmpc
 import control
 import pickle
 import matplotlib.pyplot as plt
 import scipy.linalg as linalg
 import time
 
-filename = "n2_qpfw_nom"
-n = 2
-m = 2
-q = 2
+filename = "n2_nom"
+n = 2  # state dimension
+m = 2  # input dimension
+q = 2  # disturbance dimension
 
+# x^+ = Ax + Bu + Gw
 A = np.array([[0.9, 0], [0.2, 0.8]])
 B = np.array([[1, 0], [0, 1]])
 G = np.array([[1, 0], [0, 1]])
 
+# Cx(k) + Du(k) <= b
 C = np.zeros((4, 2))
 D = np.array([[-1, 0], [1, 0], [0, -1], [0, 1]])
 b = np.array([[1], [1], [0], [1]])
 
+# x(N)C_f <= b_f
 C_f = np.zeros((1, 2))
 b_f = 0
 
+# Sw <= h
 S = np.array([[1, 0], [-1, 0], [0, 1], [0, -1]])
 h = np.array([[1], [1], [1], [1]])
 
+# \ell(x,u) = x'Qx + u'Ru
 Q = np.diag([0.1, 10])
 R = np.diag([10, 0.1])
+# V_f(x) = x'Px
 P = control.dlyap(A, Q)
+# \kappa_f(x) = K_fx
 K_f = np.zeros((m, n))
 
 params = {
@@ -46,35 +53,50 @@ params = {
     "P": P,
 }
 
+# Horizon length
 N = 6
+
+Sigma_hat = np.diag([0.01, 0.01])
+rho = 0.1
+
+DRMPC = drmpc.DRMPC(
+    params,
+    N,
+    rho=rho,
+    Sigma_hat=Sigma_hat,
+    warmstart=True,
+    K_f=K_f,
+    alg="SDP",
+)
+
+x0 = np.array([[1], [1]])
+output = DRMPC.solve_ocp(x0)
+
+breakpoint()
 
 
 def run_sim(Sigma_hat, rho):
 
-    DRMPC = drmpc_qpfw.DRMPC(
+    DRMPC = drmpc.DRMPC(
         params,
         N,
         rho=rho,
         Sigma_hat=Sigma_hat,
-        iid=True,
         warmstart=True,
         K_f=K_f,
+        alg="NT",
     )
 
     trials = 1
     x0 = np.array([[1], [1]])
-    Nsim = int(50)
+    Nsim = int(5)
 
     xcl = np.empty((trials, n, Nsim + 1))
     ucl = np.empty((trials, m, Nsim))
     wcl = np.empty((trials, q, Nsim))
     cost = np.empty((trials, Nsim))
     comp_times = np.empty((trials, Nsim))
-    np.random.seed(123)
 
-    Sigma = np.array([[0.01, 0.01], [0.01, 0.04]])
-    dist = "uniform"
-    bias = False
     for ii in range(trials):
         w_prev = None
         print(ii)
