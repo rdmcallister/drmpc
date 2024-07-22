@@ -66,7 +66,7 @@ DRMPC = drmpc.DRMPC(
     Sigma_hat=Sigma_hat,
     warmstart=True,
     K_f=K_f,
-    alg="SDP",
+    alg="NT",
 )
 
 x0 = np.array([[1], [1]])
