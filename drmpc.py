@@ -371,6 +371,7 @@ class DRMPC:
         dual_ls = []
         surrogate_dual_gap_ls = []
         dual_t = -np.inf
+        iter_time = [0]
 
         def cost(v, M, bfSigma):
             out = (
@@ -382,6 +383,7 @@ class DRMPC:
             return out.item()
 
         t = 0
+        start_time = time.time()
         while True:
             # solve inner maximization
             D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
@@ -463,13 +465,16 @@ class DRMPC:
             M = (1 - eta) * M + eta * s_M
 
             t = t + 1
+            iter_time.append(time.time() - start_time)
 
         return {
             "v": v,
             "M": M,
+            "obj": cost_ls[-1],
             "cost": np.array(cost_ls),
             "dual": np.array(dual_ls),
             "surrogate_dual_gap": np.array(surrogate_dual_gap_ls),
+            "iter_time": np.array(iter_time),
             "status": status,
         }
 
@@ -481,7 +486,7 @@ class DRMPC:
         max_iter=1000,
         tol=1e-8,
         stepsize="standard",
-        tau=1.1,
+        tau=1.5,
         zeta=10,
     ):
         n = self.dims["n"]
@@ -509,6 +514,9 @@ class DRMPC:
         dual_ls = []
         surrogate_dual_gap_ls = []
         dual_t = -np.inf
+        iter_time = [0]
+        lp_time = []
+        step_time = []
 
         def cost(v, M, bfSigma):
             out = (
@@ -520,6 +528,7 @@ class DRMPC:
             return out.item()
 
         t = 0
+        start_time = time.time()
         while True:
             # solve inner maximization
             D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
@@ -535,11 +544,14 @@ class DRMPC:
             deltaV_v = 2 * H_u.T @ H_x @ x + 2 * H_u.T @ H_u @ v
             deltaV_M = 2 * (H_u.T @ H_u) @ M @ bfSigma + 2 * H_u.T @ H_w @ bfSigma
 
+            lp_start = time.time()
             # Solve LP for search direction
             opt_lp = self._solve_lp(self.lp, x, deltaV_v, deltaV_M)
             s_v = opt_lp["v"]
             s_M = opt_lp["M"]
+            lp_time.append(time.time() - lp_start)
 
+            step_start = time.time()
             g = ((v - s_v).T @ deltaV_v + np.trace((M - s_M).T @ deltaV_M)).item()
             sq_norm_d = (
                 (v - s_v).T @ (v - s_v) + np.trace((M - s_M).T @ (M - s_M))
@@ -599,12 +611,19 @@ class DRMPC:
             M = (1 - eta) * M + eta * s_M
 
             t = t + 1
+            step_time.append(time.time() - step_start)
+            iter_time.append(time.time() - start_time)
+
         return {
             "v": v,
             "M": M,
+            "obj": cost_ls[-1],
             "cost": np.array(cost_ls),
             "dual": np.array(dual_ls),
             "surrogate_dual_gap": np.array(surrogate_dual_gap_ls),
+            "iter_time": np.array(iter_time),
+            "lp_time": np.array(lp_time),
+            "step_time": np.array(step_time),
             "status": status,
         }
 
@@ -835,6 +854,8 @@ class DRMPC:
         x_par = qp["x"]
         bfSigma_sqrt_par = qp["bfSigma_sqrt"]
 
+        H_x = self.matrices["H_x"]
+
         x_par.value = np.reshape(x, (len(x), 1))
         bfSigma_sqrt_par.value = linalg.sqrtm(bfSigma)
 
@@ -844,6 +865,7 @@ class DRMPC:
             opt = {
                 "v": v.value,
                 "M": M.value,
+                "obj": (prob.value + (H_x @ x).T @ (H_x @ x)).item(),
                 "solverstats": prob.solver_stats,
             }
             return opt
@@ -851,10 +873,14 @@ class DRMPC:
             raise ValueError("Problem is " + str(prob.status))
 
     def _estimate_beta_iid(self, H_u, Sigma_hat, rho, **kwargs):
-        """Estimate smoothness parameter beta for NT algorithm"""
+        """Estimate smoothness parameter beta for NT/FW algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
-        beta_M = (np.linalg.norm(Sigma_hat, ord=2) + rho**2) * beta_v
+        beta_M = (
+            2
+            * (rho**2 + 2 * rho * np.sqrt(np.trace(Sigma_hat)))
+            * np.linalg.norm(D, ord=2)
+        )
         beta = max(beta_v, beta_M)
         return beta
 
@@ -862,7 +888,11 @@ class DRMPC:
         """Estimate smoothness parameter beta for NT algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
-        beta_M = (np.linalg.norm(bfSigma_hat, ord=2) + bfrho**2) * beta_v
+        beta_M = (
+            2
+            * (bfrho**2 + 2 * bfrho * np.sqrt(np.trace(bfSigma_hat)))
+            * np.linalg.norm(D, ord=2)
+        )
         beta = max(beta_v, beta_M)
         return beta
 

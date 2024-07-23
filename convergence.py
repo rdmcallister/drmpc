@@ -73,15 +73,11 @@ DRMPC = drmpc.DRMPC(
     alg="SDP",
 )
 
-output = DRMPC.solve_ocp(
-    x0,
-    v_ws=v_ws,
-    M_ws=M_ws,
-)
+output = DRMPC.solve_ocp(x0)
 obj = output["opt"]["obj"]
 
 
-def run_opt(alg, stepsize):
+def run_opt(alg, stepsize, max_iter):
     DRMPC = drmpc.DRMPC(
         params,
         N,
@@ -89,7 +85,7 @@ def run_opt(alg, stepsize):
         Sigma_hat=Sigma_hat,
         warmstart=False,
         alg=alg,
-        alg_options={"max_iter": 100, "stepsize": stepsize, "tol": 1e-8},
+        alg_options={"max_iter": max_iter, "stepsize": stepsize, "tol": 1e-8},
     )
 
     output = DRMPC.solve_ocp(
@@ -97,41 +93,43 @@ def run_opt(alg, stepsize):
         v_ws=v_ws,
         M_ws=M_ws,
     )
-    return output["opt"]["cost"]
+    return output["opt"]
 
 
-fw_a = run_opt("FW", "adaptive")
-fw_fa = run_opt("FW", "fully adaptive")
-nt_a = run_opt("NT", "adaptive")
-nt_fa = run_opt("NT", "fully adaptive")
+fw_a = run_opt("FW", "adaptive", 1000)
+fw_fa = run_opt("FW", "fully adaptive", 100)
+nt_a = run_opt("NT", "adaptive", 100)
+nt_fa = run_opt("NT", "fully adaptive", 100)
+
 
 gridstyle = {"linewidth": 0.5, "alpha": 0.5, "which": "major"}
 
 
-fig, ax = plt.subplots(1, 1, figsize=(6, 2.5), sharey=True)
+fig, axs = plt.subplots(2, 1, figsize=(6, 2.5), sharey=True)
 
+ax = axs[0]
 ax.semilogy(
-    np.arange(len(fw_a)),
-    fw_a - obj,
+    np.arange(len(fw_a["cost"])),
+    fw_a["cost"] - obj,
     label="FW Adaptive",
     marker=".",
 )
 ax.semilogy(
-    np.arange(len(fw_fa)),
-    fw_fa - obj,
+    np.arange(len(fw_fa["cost"])),
+    fw_fa["cost"] - obj,
     label="FW Fully Adaptive",
     marker="d",
 )
 
 ax.semilogy(
-    np.arange(len(nt_a)),
-    nt_a - obj,
+    np.arange(len(nt_a["cost"])),
+    nt_a["cost"] - obj,
     label="NT Adaptive",
     marker="x",
 )
 ax.semilogy(
-    np.arange(len(nt_fa)),
-    nt_fa - obj,
+    np.arange(len(nt_fa["cost"])),
+    nt_fa["cost"] - obj,
     label="NT Fully Adaptive",
     marker="*",
 )
@@ -142,4 +140,38 @@ ax.set_xlim(0, 100)
 ax.set_ylim(1e-6, 50)
 ax.legend()
 ax.grid(**gridstyle)
+
+ax = axs[1]
+ax.semilogy(
+    fw_a["iter_time"],
+    fw_a["cost"] - obj,
+    label="FW Adaptive",
+    marker=".",
+)
+ax.semilogy(
+    fw_fa["iter_time"],
+    fw_fa["cost"] - obj,
+    label="FW Fully Adaptive",
+    marker="d",
+)
+
+ax.semilogy(
+    nt_a["iter_time"],
+    nt_a["cost"] - obj,
+    label="NT Adaptive",
+    marker="x",
+)
+ax.semilogy(
+    nt_fa["iter_time"],
+    nt_fa["cost"] - obj,
+    label="NT Fully Adaptive",
+    marker="*",
+)
+
+ax.set_xlabel("computation time (s)")
+ax.set_ylabel(r"$f(\theta_t)-f^*$")
+ax.set_xlim(0, 10)
+ax.set_ylim(1e-6, 50)
+fig.tight_layout()
+
 plt.show()

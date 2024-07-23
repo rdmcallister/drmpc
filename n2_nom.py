@@ -133,5 +133,6 @@ ax.grid(**gridstyle)
 
 fig.align_ylabels()
 fig.tight_layout(pad=0.5)
+fig.tight_layout()
 
 plt.show()
