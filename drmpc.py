@@ -878,7 +878,7 @@ class DRMPC:
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (
             2
-            * (rho**2 + 2 * rho * np.sqrt(np.trace(Sigma_hat)))
+            * (rho + np.sqrt(np.linalg.norm(Sigma_hat, ord=2))) ** 2
             * np.linalg.norm(D, ord=2)
         )
         beta = max(beta_v, beta_M)
@@ -890,7 +890,7 @@ class DRMPC:
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (
             2
-            * (bfrho**2 + 2 * bfrho * np.sqrt(np.trace(bfSigma_hat)))
+            * (bfrho + np.sqrt(np.linalg.norm(bfSigma_hat, ord=2))) ** 2
             * np.linalg.norm(D, ord=2)
         )
         beta = max(beta_v, beta_M)
