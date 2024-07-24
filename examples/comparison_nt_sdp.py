@@ -55,7 +55,7 @@ Sigma_hat = np.diag([0.01, 0.01])
 rho = 0.1
 max_iter = 1000
 tol = 1e-6
-N_max = 15
+N_max = 30
 
 x0 = np.array([[1], [1]])
 
@@ -112,3 +112,5 @@ ax.set_ylim(0, 100)
 fig.tight_layout()
 
 plt.show()
+
+fig.savefig("comparison_plot.pdf")

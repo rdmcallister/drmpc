@@ -5,6 +5,7 @@ import pickle
 import matplotlib.pyplot as plt
 import scipy.linalg as linalg
 import time
+import plottools
 
 n = 2  # state dimension
 m = 2  # input dimension
@@ -105,32 +106,32 @@ nt_fa = run_opt("NT", "fully adaptive", 100)
 gridstyle = {"linewidth": 0.5, "alpha": 0.5, "which": "major"}
 
 
-fig, axs = plt.subplots(2, 1, figsize=(6, 2.5), sharey=True)
+fig, axs = plt.subplots(2, 1, figsize=(3.5, 4), sharey=True)
 
 ax = axs[0]
 ax.semilogy(
     np.arange(len(fw_a["cost"])),
     fw_a["cost"] - obj,
-    label="FW Adaptive",
+    label="FW-A",
     marker=".",
 )
 ax.semilogy(
     np.arange(len(fw_fa["cost"])),
     fw_fa["cost"] - obj,
-    label="FW Fully Adaptive",
+    label="FW-FA",
     marker="d",
 )
 
 ax.semilogy(
     np.arange(len(nt_a["cost"])),
     nt_a["cost"] - obj,
-    label="NT Adaptive",
+    label="NT-A",
     marker="x",
 )
 ax.semilogy(
     np.arange(len(nt_fa["cost"])),
     nt_fa["cost"] - obj,
-    label="NT Fully Adaptive",
+    label="NT-FA",
     marker="*",
 )
 
@@ -145,26 +146,26 @@ ax = axs[1]
 ax.semilogy(
     fw_a["iter_time"],
     fw_a["cost"] - obj,
-    label="FW Adaptive",
+    label="FW-A",
     marker=".",
 )
 ax.semilogy(
     fw_fa["iter_time"],
     fw_fa["cost"] - obj,
-    label="FW Fully Adaptive",
+    label="FW-FA",
     marker="d",
 )
 
 ax.semilogy(
     nt_a["iter_time"],
     nt_a["cost"] - obj,
-    label="NT Adaptive",
+    label="NT-A",
     marker="x",
 )
 ax.semilogy(
     nt_fa["iter_time"],
     nt_fa["cost"] - obj,
-    label="NT Fully Adaptive",
+    label="NT-FA",
     marker="*",
 )
 
@@ -172,6 +173,10 @@ ax.set_xlabel("computation time (s)")
 ax.set_ylabel(r"$f(\theta_t)-f^*$")
 ax.set_xlim(0, 10)
 ax.set_ylim(1e-6, 50)
-fig.tight_layout()
+ax.grid(**gridstyle)
+
+fig.tight_layout(pad=0.5)
 
 plt.show()
+
+fig.savefig("convergence_plot.pdf")

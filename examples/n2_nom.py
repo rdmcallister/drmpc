@@ -136,3 +136,5 @@ fig.tight_layout(pad=0.5)
 fig.tight_layout()
 
 plt.show()
+
+fig.savefig("n2_nom_plot.pdf")
