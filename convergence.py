@@ -1,11 +1,7 @@
 import numpy as np
 import drmpc
 import control
-import pickle
 import matplotlib.pyplot as plt
-import scipy.linalg as linalg
-import time
-import plottools
 
 n = 2  # state dimension
 m = 2  # input dimension
