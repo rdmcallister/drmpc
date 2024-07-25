@@ -54,7 +54,7 @@ params = {
 N = 10
 
 Sigma_hat = np.diag([0.01, 0.01])
-rho = 0.1
+epsilon = 0.1
 
 x0 = np.array([[1], [1]])
 v_ws = np.zeros((N * m, 1))
@@ -64,10 +64,11 @@ M_ws = np.zeros((N * m, N * q))
 DRMPC = drmpc.DRMPC(
     params,
     N,
-    rho=rho,
+    epsilon=epsilon,
     Sigma_hat=Sigma_hat,
     warmstart=False,
     alg="SDP",
+    solver="MOSEK",
 )
 
 output = DRMPC.solve_ocp(x0)
@@ -78,7 +79,7 @@ def run_opt(alg, stepsize, max_iter):
     DRMPC = drmpc.DRMPC(
         params,
         N,
-        rho=rho,
+        epsilon=epsilon,
         Sigma_hat=Sigma_hat,
         warmstart=False,
         alg=alg,

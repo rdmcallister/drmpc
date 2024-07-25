@@ -2,7 +2,6 @@ import numpy as np
 import drmpc
 import control
 import pickle
-import matplotlib.pyplot as plt
 import scipy.linalg as linalg
 import time
 
@@ -50,12 +49,12 @@ N = 10
 trials = 30
 
 
-def run_sim(Sigma_hat, rho):
+def run_sim(Sigma_hat, epsilon):
 
     DRMPC = drmpc.DRMPC(
         params,
         N,
-        rho=rho,
+        epsilon=epsilon,
         Sigma_hat=Sigma_hat,
         iid=True,
         warmstart=True,
@@ -102,15 +101,15 @@ def run_sim(Sigma_hat, rho):
 
 
 Sigma_hat = np.diag([0.01, 0.01])
-rhos = np.logspace(-2, 0, 10)
-J_i = np.empty((len(rhos), trials))
+epsilons = np.logspace(-2, 0, 10)
+J_i = np.empty((len(epsilons), trials))
 
-for i in range(len(rhos)):
-    print(rhos[i])
-    drmpc_sim = run_sim(Sigma_hat, rhos[i])
+for i in range(len(epsilons)):
+    print(epsilons[i])
+    drmpc_sim = run_sim(Sigma_hat, epsilons[i])
     J_i[i, :] = np.average(drmpc_sim["cost"], axis=-1)
 
-stats = {"rhos": rhos, "J_i": J_i}
+stats = {"epsilons": epsilons, "J_i": J_i}
 
 with open(filename + ".pkl", "wb") as handle:
     pickle.dump(stats, handle, protocol=pickle.HIGHEST_PROTOCOL)

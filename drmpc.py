@@ -12,7 +12,7 @@ class DRMPC:
         self,
         params,
         N,
-        rho=None,
+        epsilon=None,
         Sigma_hat=None,
         warmstart=False,  # warm start NT/FW algs with extended solution
         K_f=None,
@@ -29,7 +29,7 @@ class DRMPC:
         Args:
             params: dict with keyword args for matricies in DRMPC formulation.
             N: Horizon length (int).
-            rho: Gelbrich ball radius for iid disturbance (scalar).
+            epsilon: Gelbrich ball radius for iid disturbance (scalar).
             Sigma_hat: Covariance of center for Gelbrich ball (numpy array).
             warmstart: True if terminal gain matrix K_f is used to construct a warm start.
             K_f: Terminal gain matrix K_f to be used if warmstart=True
@@ -56,13 +56,13 @@ class DRMPC:
         self.dims = self._find_dims(**params)
         self.matrices = self._construct_matrices(**{**params, **self.dims, "N": N})
 
-        # If rho and bfrho are none, assume zero radius
-        if rho is None:
-            rho = 0
-        # Construct bfrho from rho and horizon length
-        bfrho = np.sqrt(N) * rho
+        # If epsilon and bfepsilon are none, assume zero radius
+        if epsilon is None:
+            epsilon = 0
+        # Construct bfepsilon from epsilon and horizon length
+        bfepsilon = np.sqrt(N) * epsilon
 
-        if rho <= 1e-16:
+        if epsilon <= 1e-16:
             self.smpc = True
         else:
             self.smpc = False
@@ -74,9 +74,9 @@ class DRMPC:
         bfSigma_hat = np.kron(np.eye(N), Sigma_hat)
 
         # set Gelbrich parameters
-        self.rho = rho
+        self.epsilon = epsilon
         self.Sigma_hat = Sigma_hat
-        self.bfrho = bfrho
+        self.bfepsilon = bfepsilon
         self.bfSigma_hat = bfSigma_hat
         self.iid = iid
 
@@ -90,11 +90,11 @@ class DRMPC:
             # estimate beta for Newton type method
             if iid:
                 self.beta = self._estimate_beta_iid(
-                    **self.matrices, Sigma_hat=Sigma_hat, rho=rho
+                    **self.matrices, Sigma_hat=Sigma_hat, epsilon=epsilon
                 )
             else:
                 self.beta = self._estimate_beta(
-                    **self.matrices, bfSigma_hat=bfSigma_hat, bfrho=bfrho
+                    **self.matrices, bfSigma_hat=bfSigma_hat, bfepsilon=bfepsilon
                 )
 
         if self.alg == "FW" and not self.smpc:
@@ -103,24 +103,24 @@ class DRMPC:
             # estimate beta for Newton type method
             if iid:
                 self.beta = self._estimate_beta_iid(
-                    **self.matrices, Sigma_hat=Sigma_hat, rho=rho
+                    **self.matrices, Sigma_hat=Sigma_hat, epsilon=epsilon
                 )
             else:
                 self.beta = self._estimate_beta(
-                    **self.matrices, bfSigma_hat=bfSigma_hat, bfrho=bfrho
+                    **self.matrices, bfSigma_hat=bfSigma_hat, bfepsilon=bfepsilon
                 )
 
         if self.alg == "SDP" and not self.smpc:
             if iid:
                 self.sdp = self._construct_sdp_iid(
-                    **{**self.matrices, "rho": rho, "Sigma_hat": Sigma_hat}
+                    **{**self.matrices, "epsilon": epsilon, "Sigma_hat": Sigma_hat}
                 )
             else:
                 self.sdp = self._construct_sdp(
                     **{
                         **self.matrices,
                         "N": N,
-                        "bfrho": bfrho,
+                        "bfepsilon": bfepsilon,
                         "bfSigma_hat": bfSigma_hat,
                     }
                 )
@@ -207,21 +207,21 @@ class DRMPC:
         output = self.solve_ocp(x0, w_prev=w_prev, **kwargs)
         return output["kappa"]
 
-    def bisection_iid(self, D, rho, Sigma_hat, N, tol=1e-8, max_iter=int(1e6)):
+    def bisection_iid(self, D, epsilon, Sigma_hat, N, tol=1e-8, max_iter=int(1e6)):
         """Compute worst case covariance bfSigma for current D"""
         q = np.shape(Sigma_hat)[0]
         bfSigma = np.zeros((q * N, q * N))
         for k in range(N):
             bfSigma[k * q : (k + 1) * q, k * q : (k + 1) * q] = self.bisection(
                 D[k * q : (k + 1) * q, k * q : (k + 1) * q],
-                rho,
+                epsilon,
                 Sigma_hat,
                 tol=tol,
                 max_iter=max_iter,
             )
         return bfSigma
 
-    def bisection(self, D, rho, Sigma_hat, tol=1e-8, max_iter=int(1e6)):
+    def bisection(self, D, epsilon, Sigma_hat, tol=1e-8, max_iter=int(1e6)):
         """Bisection algorithm to solve for worst case covariance Sigma"""
         n = np.shape(D)[0]
         [Lambda, V] = np.linalg.eigh(D)
@@ -231,20 +231,20 @@ class DRMPC:
         # if D=0, all solutions are optimal, choose Sigma_hat
         if (np.abs(Lambda) <= 1e-8).all():
             return Sigma_hat
-        # if rho is sufficiently small, ignore bisection step
-        if rho <= 1e-16:
+        # if epsilon is sufficiently small, ignore bisection step
+        if epsilon <= 1e-16:
             return Sigma_hat
 
         V = V[:, idx]
         lambda_max = Lambda[-1]
         v_max = V[:, -1]
-        LB = lambda_max * (1 + np.sqrt(v_max.T @ Sigma_hat @ v_max) / rho)
-        UB = lambda_max * (1 + np.sqrt(np.trace(Sigma_hat)) / rho)
+        LB = lambda_max * (1 + np.sqrt(v_max.T @ Sigma_hat @ v_max) / epsilon)
+        UB = lambda_max * (1 + np.sqrt(np.trace(Sigma_hat)) / epsilon)
         for iter in range(max_iter):
             gamma = (LB + UB) / 2
             inv_gamma_minus_D = (V * (1 / (gamma - Lambda))) @ V.T
             L = gamma**2 * (inv_gamma_minus_D @ Sigma_hat @ inv_gamma_minus_D)
-            phi = rho**2 - np.trace(
+            phi = epsilon**2 - np.trace(
                 Sigma_hat
                 @ np.linalg.matrix_power(np.eye(n) - gamma * inv_gamma_minus_D, 2)
             )
@@ -253,7 +253,7 @@ class DRMPC:
             else:
                 UB = gamma
             Delta = (
-                gamma * (rho**2 - np.trace(Sigma_hat))
+                gamma * (epsilon**2 - np.trace(Sigma_hat))
                 - np.trace(L @ D)
                 + gamma**2 * np.trace(inv_gamma_minus_D @ Sigma_hat)
             )
@@ -325,9 +325,9 @@ class DRMPC:
         H_w = self.matrices["H_w"]
         D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
         if self.iid:
-            bfSigma = self.bisection_iid(D, self.rho, self.Sigma_hat, self.N)
+            bfSigma = self.bisection_iid(D, self.epsilon, self.Sigma_hat, self.N)
         else:
-            bfSigma = self.bisection(D, self.bfrho, self.bfSigma_hat)
+            bfSigma = self.bisection(D, self.bfepsilon, self.bfSigma_hat)
         out = (
             (H_x @ x).T @ (H_x @ x) + 2 * x.T @ H_x.T @ H_u @ v + v.T @ H_u.T @ H_u @ v
         )
@@ -388,9 +388,9 @@ class DRMPC:
             # solve inner maximization
             D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
             if iid:
-                bfSigma = self.bisection_iid(D, self.rho, self.Sigma_hat, N)
+                bfSigma = self.bisection_iid(D, self.epsilon, self.Sigma_hat, N)
             else:
-                bfSigma = self.bisection(D, self.bfrho, self.bfSigma_hat)
+                bfSigma = self.bisection(D, self.bfepsilon, self.bfSigma_hat)
 
             cost_t = cost(v, M, bfSigma)
             cost_ls += [cost_t]
@@ -435,10 +435,12 @@ class DRMPC:
                 D_plus = (H_u @ M_plus + H_w).T @ (H_u @ M_plus + H_w)
                 if iid:
                     bfSigma_plus = self.bisection_iid(
-                        D_plus, self.rho, self.Sigma_hat, N
+                        D_plus, self.epsilon, self.Sigma_hat, N
                     )
                 else:
-                    bfSigma_plus = self.bisection(D_plus, self.bfrho, self.bfSigma_hat)
+                    bfSigma_plus = self.bisection(
+                        D_plus, self.bfepsilon, self.bfSigma_hat
+                    )
                 while (
                     cost(v_plus, M_plus, bfSigma_plus)
                     > cost_t - eta * g + eta**2 * beta / 2 * sq_norm_d
@@ -450,11 +452,11 @@ class DRMPC:
                     D_plus = (H_u @ M_plus + H_w).T @ (H_u @ M_plus + H_w)
                     if iid:
                         bfSigma_plus = self.bisection_iid(
-                            D_plus, self.rho, self.Sigma_hat, N
+                            D_plus, self.epsilon, self.Sigma_hat, N
                         )
                     else:
                         bfSigma_plus = self.bisection(
-                            D_plus, self.bfrho, self.bfSigma_hat
+                            D_plus, self.bfepsilon, self.bfSigma_hat
                         )
 
             else:
@@ -533,9 +535,9 @@ class DRMPC:
             # solve inner maximization
             D = (H_u @ M + H_w).T @ (H_u @ M + H_w)
             if iid:
-                bfSigma = self.bisection_iid(D, self.rho, self.Sigma_hat, N)
+                bfSigma = self.bisection_iid(D, self.epsilon, self.Sigma_hat, N)
             else:
-                bfSigma = self.bisection(D, self.bfrho, self.bfSigma_hat)
+                bfSigma = self.bisection(D, self.bfepsilon, self.bfSigma_hat)
 
             cost_t = cost(v, M, bfSigma)
             cost_ls += [cost_t]
@@ -582,10 +584,12 @@ class DRMPC:
                 D_plus = (H_u @ M_plus + H_w).T @ (H_u @ M_plus + H_w)
                 if iid:
                     bfSigma_plus = self.bisection_iid(
-                        D_plus, self.rho, self.Sigma_hat, N
+                        D_plus, self.epsilon, self.Sigma_hat, N
                     )
                 else:
-                    bfSigma_plus = self.bisection(D_plus, self.bfrho, self.bfSigma_hat)
+                    bfSigma_plus = self.bisection(
+                        D_plus, self.bfepsilon, self.bfSigma_hat
+                    )
                 while (
                     cost(v_plus, M_plus, bfSigma_plus)
                     > cost_t - eta * g + eta**2 * beta / 2 * sq_norm_d
@@ -597,11 +601,11 @@ class DRMPC:
                     D_plus = (H_u @ M_plus + H_w).T @ (H_u @ M_plus + H_w)
                     if iid:
                         bfSigma_plus = self.bisection_iid(
-                            D_plus, self.rho, self.Sigma_hat, N
+                            D_plus, self.epsilon, self.Sigma_hat, N
                         )
                     else:
                         bfSigma_plus = self.bisection(
-                            D_plus, self.bfrho, self.bfSigma_hat
+                            D_plus, self.bfepsilon, self.bfSigma_hat
                         )
             else:
                 raise ValueError(
@@ -872,25 +876,25 @@ class DRMPC:
         else:
             raise ValueError("Problem is " + str(prob.status))
 
-    def _estimate_beta_iid(self, H_u, Sigma_hat, rho, **kwargs):
+    def _estimate_beta_iid(self, H_u, Sigma_hat, epsilon, **kwargs):
         """Estimate smoothness parameter beta for NT/FW algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (
             2
-            * (rho + np.sqrt(np.linalg.norm(Sigma_hat, ord=2))) ** 2
+            * (epsilon + np.sqrt(np.linalg.norm(Sigma_hat, ord=2))) ** 2
             * np.linalg.norm(D, ord=2)
         )
         beta = max(beta_v, beta_M)
         return beta
 
-    def _estimate_beta(self, H_u, bfSigma_hat, bfrho, **kwargs):
+    def _estimate_beta(self, H_u, bfSigma_hat, bfepsilon, **kwargs):
         """Estimate smoothness parameter beta for NT algorithm"""
         D = H_u.T @ H_u
         beta_v = 2 * np.linalg.norm(D, ord=2)
         beta_M = (
             2
-            * (bfrho + np.sqrt(np.linalg.norm(bfSigma_hat, ord=2))) ** 2
+            * (bfepsilon + np.sqrt(np.linalg.norm(bfSigma_hat, ord=2))) ** 2
             * np.linalg.norm(D, ord=2)
         )
         beta = max(beta_v, beta_M)
@@ -911,7 +915,7 @@ class DRMPC:
         n,
         m,
         q,
-        bfrho,
+        bfepsilon,
         bfSigma_hat,
     ):
         (S_rows, S_cols) = np.shape(bfS)
@@ -962,7 +966,7 @@ class DRMPC:
         ]
 
         obj = 2 * (H_x @ x).T @ H_u @ v + cp.quad_form(v, H_u.T @ H_u)
-        obj += gamma * (bfrho**2 - np.trace(bfSigma_hat))
+        obj += gamma * (bfepsilon**2 - np.trace(bfSigma_hat))
         obj += cp.trace(Y)
         prob = cp.Problem(cp.Minimize(obj), constraints)
         sdp = {
@@ -990,7 +994,7 @@ class DRMPC:
         n,
         m,
         q,
-        rho,
+        epsilon,
         Sigma_hat,
     ):
         (S_rows, S_cols) = np.shape(bfS)
@@ -1046,7 +1050,7 @@ class DRMPC:
                 >> 0
             ]
 
-            obj += gamma[k] * (rho**2 - np.trace(Sigma_hat))
+            obj += gamma[k] * (epsilon**2 - np.trace(Sigma_hat))
             obj += cp.trace(Y_k)
 
         prob = cp.Problem(cp.Minimize(obj), constraints)

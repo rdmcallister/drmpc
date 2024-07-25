@@ -53,7 +53,7 @@ params = {
 }
 
 Sigma_hat = np.diag([0.01, 0.01])
-rho = 0.1
+epsilon = 0.1
 max_iter = 1000
 tol = 1e-6
 N_max = 30
@@ -72,7 +72,7 @@ for N in range(1, N_max + 1):
     DRMPC_SDP = drmpc.DRMPC(
         params,
         N,
-        rho=rho,
+        epsilon=epsilon,
         Sigma_hat=Sigma_hat,
         warmstart=False,
         alg="SDP",
@@ -87,7 +87,7 @@ for N in range(1, N_max + 1):
     DRMPC_NT = drmpc.DRMPC(
         params,
         N,
-        rho=rho,
+        epsilon=epsilon,
         Sigma_hat=Sigma_hat,
         warmstart=False,
         alg="NT",
