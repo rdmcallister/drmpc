@@ -63,7 +63,7 @@ def run_sim(Sigma_hat, rho):
         alg="NT",
     )
 
-    trials = 30
+    trials = 100
     x0 = np.array([[1], [1]])
     Nsim = int(500)
 

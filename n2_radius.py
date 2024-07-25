@@ -47,7 +47,7 @@ params = {
 }
 
 N = 10
-trials = 2
+trials = 30
 
 
 def run_sim(Sigma_hat, rho):
@@ -63,7 +63,7 @@ def run_sim(Sigma_hat, rho):
     )
 
     x0 = np.array([[1], [1]])
-    Nsim = int(10)
+    Nsim = int(500)
 
     xcl = np.empty((trials, n, Nsim + 1))
     ucl = np.empty((trials, m, Nsim))

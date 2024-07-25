@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
-import control
-import drmpc
 
 
 with open("n2_sim.pkl", "rb") as handle:

@@ -3,6 +3,7 @@ import control
 import drmpc
 import matplotlib.pyplot as plt
 import time
+import pickle
 
 n = 2  # state dimension
 m = 2  # input dimension
@@ -98,19 +99,16 @@ for N in range(1, N_max + 1):
     time_nt.append(time.time() - start)
     obj_nt.append(output["opt"]["obj"])
 
-fig, ax = plt.subplots(1, 1, figsize=(3.5, 2.5))
 
 Ns = np.arange(1, N_max + 1)
-ax.plot(Ns, time_sdp, label="MOSEK (LMI)", marker="s", color="k")
-ax.plot(Ns, time_nt, label="NT Fully Adaptive", marker="*", color="C3")
-ax.set_xlabel(r"$N$")
-ax.set_ylabel("computation~~time (s)")
-ax.set_xlim(1, N_max)
-ax.legend()
-ax.grid(alpha=0.5, linewidth=0.5)
-ax.set_ylim(0, 100)
-fig.tight_layout()
 
-plt.show()
+stats = {
+    "Ns": Ns,
+    "time_sdp": time_sdp,
+    "time_nt": time_nt,
+    "obj_sdp": obj_sdp,
+    "obj_nt": obj_nt,
+}
 
-fig.savefig("comparison_plot.pdf")
+with open("comparison.pkl", "wb") as handle:
+    pickle.dump(stats, handle, protocol=pickle.HIGHEST_PROTOCOL)
