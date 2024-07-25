@@ -47,7 +47,7 @@ If you use DRMPC for research, please cite our accompanying paper:
 ```bibtex
 @article{mcallister2023distributionally,
   title={Distributionally Robust Model Predictive Control: Closed-loop Guarantees and Scalable Algorithms},
-  author={McAllister, Robert D and Esfahani, Peyman Mohajerin},
+  author={McAllister, Robert D and Mohajerin Esfahani, Peyman},
   journal={arXiv preprint arXiv:2309.12758},
   year={2023}
 }
